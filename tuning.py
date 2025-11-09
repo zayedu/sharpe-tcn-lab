@@ -50,6 +50,12 @@ def tune_riskmap(
     scale_grid: Iterable[float],
     prob_grid: Iterable[float],
     stop_grid: Iterable[float],
+    drawdown_grid: Iterable[float],
+    confidence_grid: Iterable[float],
+    kelly_grid: Iterable[float],
+    kelly_power_grid: Iterable[float],
+    bull_scale_grid: Iterable[float],
+    bear_scale_grid: Iterable[float],
     cost_bps: float = 3.0,
 ) -> Tuple[TuningResult, dict]:
     best_cfg, best_metrics = None, None
@@ -64,35 +70,49 @@ def tune_riskmap(
                         for tau_k in tau_k_grid:
                             for prob_thr in prob_grid:
                                 for stop in stop_grid:
-                                    cfg = RiskMapConfig(
-                                        tau=tau,
-                                        sigma_target=sigma_target,
-                                        wmax=wmax,
-                                        blend=blend,
-                                        tau_k=tau_k,
-                                        prob_threshold=prob_thr,
-                                        stop_loss=stop,
-                                    )
-                                    sharpe_scores = []
-                                    for fold in folds:
-                                        sl = fold
-                                        fold_res = run_backtest(
-                                            probs=scaled_probs[sl],
-                                            sigma_hat=sigma_hat[sl],
-                                            price=price[sl],
-                                            future_returns=future_returns[sl],
-                                            dates=dates[sl],
-                                            positions=positions[sl],
-                                            cfg=cfg,
-                                            regime=regime[sl],
-                                            cost_bps=cost_bps,
-                                        )
-                                        sharpe_scores.append(fold_res.metrics["sharpe"])
-                                    score = float(np.nanmean(sharpe_scores))
-                                    if score > best_score:
-                                        best_score = score
-                                        best_cfg = TuningResult(config=cfg, prob_scale=scale)
-                                        best_metrics = fold_res.metrics
+                                    for drawdown_limit in drawdown_grid:
+                                        for confidence_gamma in confidence_grid:
+                                            for kelly_frac in kelly_grid:
+                                                for kelly_power in kelly_power_grid:
+                                                    for bull_scale in bull_scale_grid:
+                                                        for bear_scale in bear_scale_grid:
+                                                            cfg = RiskMapConfig(
+                                                                tau=tau,
+                                                                sigma_target=sigma_target,
+                                                                wmax=wmax,
+                                                                blend=blend,
+                                                                tau_k=tau_k,
+                                                                prob_threshold=prob_thr,
+                                                                stop_loss=stop,
+                                                                drawdown_limit=drawdown_limit,
+                                                                confidence_gamma=confidence_gamma,
+                                                                kelly_frac=kelly_frac,
+                                                                kelly_power=kelly_power,
+                                                                bull_scale=bull_scale,
+                                                                bear_scale=bear_scale,
+                                                            )
+                                                            sharpe_scores: list[float] = []
+                                                            fold_metrics = None
+                                                            for fold in folds:
+                                                                sl = fold
+                                                                fold_res = run_backtest(
+                                                                    probs=scaled_probs[sl],
+                                                                    sigma_hat=sigma_hat[sl],
+                                                                    price=price[sl],
+                                                                    future_returns=future_returns[sl],
+                                                                    dates=dates[sl],
+                                                                    positions=positions[sl],
+                                                                    cfg=cfg,
+                                                                    regime=regime[sl],
+                                                                    cost_bps=cost_bps,
+                                                                )
+                                                                sharpe_scores.append(fold_res.metrics["sharpe"])
+                                                                fold_metrics = fold_res.metrics
+                                                            score = float(np.nanmean(sharpe_scores))
+                                                            if score > best_score:
+                                                                best_score = score
+                                                                best_cfg = TuningResult(config=cfg, prob_scale=scale)
+                                                                best_metrics = fold_metrics
     if best_cfg is None or best_metrics is None:
         raise RuntimeError("Risk-map tuning failed")
     return best_cfg, best_metrics

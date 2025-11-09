@@ -49,12 +49,27 @@ def sharpe_loss(positions: torch.Tensor, future_ret: torch.Tensor, cost: float) 
     return -(mean / std)
 
 
-def evaluate(model: HybridSignalNet, loader: DataLoader, cost: float) -> dict:
+def sortino_loss(positions: torch.Tensor, future_ret: torch.Tensor, cost: float) -> torch.Tensor:
+    if len(positions) == 1:
+        pnl = positions * future_ret
+    else:
+        diff = positions[1:] - positions[:-1]
+        turnover = torch.zeros_like(positions)
+        turnover[1:] = diff.abs()
+        pnl = positions * future_ret - cost * turnover
+    downside = torch.sqrt((torch.clamp(-pnl, min=0.0) ** 2).mean() + 1e-6)
+    return -(pnl.mean() / downside)
+
+
+def evaluate(model: HybridSignalNet, loader: DataLoader, cost: float, device: torch.device) -> dict:
     model.eval()
     probs, targets, returns, positions = [], [], [], []
     with torch.no_grad():
         for batch in loader:
             xb, yb, fut_ret, _, _, *_ = batch
+            xb = xb.to(device)
+            yb = yb.to(device)
+            fut_ret = fut_ret.to(device)
             out: ModelOutput = model(xb)
             probs.append(out.prob.cpu())
             targets.append(yb.cpu())

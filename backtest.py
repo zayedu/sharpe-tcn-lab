@@ -65,12 +65,17 @@ def run_backtest(
     equity[0] = 1.0
     cash, inventory = 1.0, 0.0
     entry_price = None
+    peak = equity[0]
     for t in range(n):
         px = price[t]
         equity_t = cash + inventory * px
         if not np.isclose(equity_t, equity[t], atol=1e-9):
             raise RuntimeError("Equity tracking drift detected")
-        target_val = weights[t] * equity_t
+        drawdown = (peak - equity_t) / peak if peak > 0 else 0.0
+        scale = 1.0
+        if drawdown > cfg.drawdown_limit > 0:
+            scale = cfg.risk_scale_min
+        target_val = weights[t] * equity_t * scale
         trade_val = target_val - inventory * px
         inventory += trade_val / px if px != 0 else 0.0
         cash -= trade_val + abs(trade_val) * fee
@@ -98,10 +103,12 @@ def run_backtest(
         new_equity = cash + inventory * next_price
         pnl[t] = new_equity - equity_t
         equity[t + 1] = new_equity
+        peak = max(peak, new_equity)
     metrics = _stats(equity, pnl)
     turnover = np.mean(np.abs(np.diff(np.concatenate([[0.0], weights]))))
     metrics["turnover"] = float(turnover)
-    realized = (future_returns > 0).astype(float)
-    brier = float(((probs - realized) ** 2).mean())
-    metrics["brier"] = brier
+    if probs is not None:
+        realized = (future_returns > 0).astype(float)
+        brier = float(((probs - realized) ** 2).mean())
+        metrics["brier"] = brier
     return BacktestResult(metrics=metrics, equity=equity, weights=weights, pnl=pnl, dates=dates)

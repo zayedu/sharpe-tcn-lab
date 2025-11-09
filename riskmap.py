@@ -16,6 +16,12 @@ class RiskMapConfig:
     prob_threshold: float = 0.0  # |p-0.5| threshold for neutrality
     stop_loss: float = 0.0  # expressed as fraction of entry price
     confidence_gamma: float = 1.0  # >1 down-weights low confidence trades
+    drawdown_limit: float = 0.08  # before scaling exposures
+    risk_scale_min: float = 0.3  # minimum scaling factor when drawdown large
+    kelly_frac: float = 0.0  # blend weight toward Kelly sizing
+    kelly_power: float = 1.0  # curvature on Kelly intensity
+    bull_scale: float = 1.0  # multiplier when regime >= 0
+    bear_scale: float = 0.7  # multiplier when regime < 0
 
 
 def _apply_prob_threshold(probs: np.ndarray, threshold: float) -> np.ndarray:
@@ -61,8 +67,14 @@ def volatility_scaled_weights(
     if cfg.confidence_gamma != 1.0:
         confidence = np.clip(np.abs(probs - 0.5) * 2, 0.0, 1.0)
         weights *= confidence ** cfg.confidence_gamma
+    if cfg.kelly_frac > 0:
+        edge = np.clip(2 * probs - 1, -1.0, 1.0)
+        kelly = scale * edge
+        intensity = np.abs(edge) ** cfg.kelly_power
+        weights = (1 - cfg.kelly_frac) * weights + cfg.kelly_frac * intensity * kelly
     if regime is not None:
-        weights *= 1 + 0.5 * regime
+        regime_scale = np.where(np.asarray(regime) >= 0, cfg.bull_scale, cfg.bear_scale)
+        weights *= regime_scale
     return np.clip(weights, -cfg.wmax, cfg.wmax)
 
 

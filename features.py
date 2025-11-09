@@ -30,6 +30,26 @@ def _stochastic(df: pd.DataFrame, window: int = 14) -> pd.Series:
     return (df["close"] - lowest) / (highest - lowest + 1e-6)
 
 
+def _regime_features(panel: pd.DataFrame, symbol: str) -> dict[str, pd.Series]:
+    close = panel[f"{symbol}_close"]
+    ema_short = close.ewm(span=50, adjust=False).mean()
+    ema_long = close.ewm(span=200, adjust=False).mean()
+    trend = np.sign(ema_short - ema_long).fillna(0.0)
+    vix = panel.get("^vix_close")
+    if vix is None:
+        vix = panel.get("vix_close", close * 0 + 20.0)
+    vix_norm = (vix - vix.rolling(252).mean()) / (vix.rolling(252).std(ddof=0) + 1e-6)
+    regime_vol = np.sign(vix_norm).fillna(0.0)
+    regime = trend + regime_vol
+    regime = regime.clip(-1, 1)
+    cycle = np.sin(2 * np.pi * panel.index.dayofyear / 365.25)
+    return {
+        "trend_regime": pd.Series(trend.values, index=close.index),
+        "vol_regime": pd.Series(regime_vol.values, index=close.index),
+        "cycle_phase": pd.Series(cycle, index=close.index),
+    }
+
+
 def build_feature_frame(panel: pd.DataFrame, symbol: str = "spy") -> tuple[pd.DataFrame, pd.Series]:
     cols = {k.split("_")[-1]: panel[f"{symbol}_{k}"] for k in ("open", "high", "low", "close", "volume")}
     df = pd.DataFrame(cols)
@@ -64,9 +84,7 @@ def build_feature_frame(panel: pd.DataFrame, symbol: str = "spy") -> tuple[pd.Da
     tnx = panel.get("^tnx_close", panel.get("tnx_close"))
     if tnx is not None:
         macro["yield_curve"] = (df["close"] / (tnx + 1e-6)).pct_change().fillna(0.0)
-    fast = _ema(df["close"], 50)
-    slow = _ema(df["close"], 200)
-    regime = np.sign(fast - slow).fillna(0.0)
+    regime_features = _regime_features(panel, symbol)
     cpd = np.sign(ret.rolling(63).mean() - ret.rolling(252).mean()).fillna(0.0)
     cal = df.index
     season = {
@@ -84,12 +102,19 @@ def build_feature_frame(panel: pd.DataFrame, symbol: str = "spy") -> tuple[pd.Da
         "stoch": stoch,
         "bb_pos": bb,
         "vol_z": vol_z,
-        "trend_regime": regime,
         "cp_flag": cpd,
+    }
+    feat_dict.update(regime_features)
+    feat_dict["trend_regime_smoothed"] = _ema(feat_dict["trend_regime"], 20)
+    feat_dict["vol_regime_smoothed"] = _ema(feat_dict["vol_regime"], 20)
+    feat_dict.update({
         "sharpe_63": sharpe_roll,
         "skew_126": skew_roll,
         "kurt_126": kurt_roll,
-    }
+    })
+    feat_dict["cycle_phase"] = season["season_sin"]
+    feat_dict["cycle_quad"] = season["season_cos"]
+    feat_dict["cp_flag"] = cpd
     feat_dict.update(mom)
     feat_dict.update(vol_windows)
     feat_dict.update({f"macro_{k}": v for k, v in macro.items()})

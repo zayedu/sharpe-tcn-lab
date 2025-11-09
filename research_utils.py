@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import dataclass
 from typing import Iterable, Tuple
 
 import numpy as np
@@ -11,6 +12,13 @@ import torch
 
 from model_tcn import HybridSignalNet, ModelOutput
 from trainer import TrainConfig, train_tcn
+
+
+@dataclass
+class EnsembleBundle:
+    base_models: list[HybridSignalNet]
+    trend_model: HybridSignalNet | None
+    mean_model: HybridSignalNet | None
 
 
 def seed_all(seed: int, deterministic: bool = False) -> None:
@@ -25,6 +33,8 @@ def seed_all(seed: int, deterministic: bool = False) -> None:
 def benchmark(model: HybridSignalNet, sample: torch.Tensor, batches: int = 200) -> Tuple[float, float, float]:
     latencies = []
     model.eval()
+    device = next(model.parameters()).device
+    sample = sample.to(device)
     with torch.no_grad():
         for _ in range(batches):
             start = time.perf_counter()
@@ -52,21 +62,45 @@ def compute_sample_weights(dates: np.ndarray, half_life_days: int = 504) -> np.n
     return (weights / weights.mean()).astype(np.float32)
 
 
-def ensemble_predict(models: Iterable[HybridSignalNet], data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def ensemble_predict(
+    bundle: EnsembleBundle,
+    data: np.ndarray,
+    regime: np.ndarray | None = None,
+    trend_weight: float = 0.7,
+    mean_weight: float = 0.7,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     tensor = torch.from_numpy(data)
-    probs, positions, sigmas = [], [], []
-    for model in models:
+    probs_list, pos_list, sig_list = [], [], []
+    for model in bundle.base_models:
         model.eval()
         with torch.no_grad():
-            out: ModelOutput = model(tensor)
-            probs.append(out.prob.cpu().numpy())
-            positions.append(out.position.cpu().numpy())
-            sigmas.append(out.sigma.cpu().numpy())
-    return (
-        np.mean(probs, axis=0),
-        np.mean(positions, axis=0),
-        np.mean(sigmas, axis=0),
-    )
+            device = next(model.parameters()).device
+            out: ModelOutput = model(tensor.to(device))
+            probs_list.append(out.prob.cpu().numpy())
+            pos_list.append(out.position.cpu().numpy())
+            sig_list.append(out.sigma.cpu().numpy())
+    probs = np.mean(probs_list, axis=0)
+    positions = np.mean(pos_list, axis=0)
+    sigma = np.mean(sig_list, axis=0)
+    if regime is not None and bundle.trend_model is not None:
+        trend_mask = regime > 0
+        if trend_mask.any():
+            bundle.trend_model.eval()
+            with torch.no_grad():
+                device = next(bundle.trend_model.parameters()).device
+                out = bundle.trend_model(tensor.to(device))
+                probs = trend_weight * out.prob.cpu().numpy() * trend_mask + probs * (~trend_mask)
+                positions = trend_weight * out.position.cpu().numpy() * trend_mask + positions * (~trend_mask)
+    if regime is not None and bundle.mean_model is not None:
+        mean_mask = regime <= 0
+        if mean_mask.any():
+            bundle.mean_model.eval()
+            with torch.no_grad():
+                device = next(bundle.mean_model.parameters()).device
+                out = bundle.mean_model(tensor.to(device))
+                probs = mean_weight * out.prob.cpu().numpy() * mean_mask + probs * (~mean_mask)
+                positions = mean_weight * out.position.cpu().numpy() * mean_mask + positions * (~mean_mask)
+    return probs, positions, sigma
 
 
 def train_ensemble(
@@ -76,7 +110,8 @@ def train_ensemble(
     weights: np.ndarray,
     seeds: Iterable[int],
     config: TrainConfig,
-) -> list[HybridSignalNet]:
+    regime: np.ndarray,
+) -> EnsembleBundle:
     models: list[HybridSignalNet] = []
     for seed in seeds:
         seed_all(seed)
@@ -95,7 +130,35 @@ def train_ensemble(
             train_weights=weights,
         )
         models.append(model)
-    return models
+    trend_model = _train_specialized_model(tensor, train_mask, val_mask, config, regime > 0)
+    mean_model = _train_specialized_model(tensor, train_mask, val_mask, config, regime <= 0)
+    return EnsembleBundle(base_models=models, trend_model=trend_model, mean_model=mean_model)
+
+
+def _train_specialized_model(
+    tensor,
+    train_mask,
+    val_mask,
+    config: TrainConfig,
+    mask: np.ndarray,
+) -> HybridSignalNet | None:
+    if mask[train_mask].sum() < 64 or mask[val_mask].sum() < 32:
+        return None
+    model, _ = train_tcn(
+        tensor.X[train_mask][mask[train_mask]],
+        tensor.y[train_mask][mask[train_mask]],
+        tensor.future_ret[train_mask][mask[train_mask]],
+        tensor.sigma[train_mask][mask[train_mask]],
+        tensor.future_sigma[train_mask][mask[train_mask]],
+        tensor.X[val_mask][mask[val_mask]],
+        tensor.y[val_mask][mask[val_mask]],
+        tensor.future_ret[val_mask][mask[val_mask]],
+        tensor.sigma[val_mask][mask[val_mask]],
+        tensor.future_sigma[val_mask][mask[val_mask]],
+        config=config,
+        train_weights=compute_sample_weights(tensor.dates[train_mask][mask[train_mask]]),
+    )
+    return model
 
 
 def summarize(label: str, metrics_or_result) -> None:
