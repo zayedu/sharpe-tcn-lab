@@ -141,8 +141,11 @@ async def start_backtest(config: BacktestConfig):
         
         model.eval()
         with torch.no_grad():
-            X_tensor = torch.from_numpy(X).float().permute(0, 2, 1) # (N, 12, 64)
-            p_hats = model(X_tensor).numpy()
+            X_tensor = torch.from_numpy(X).float().permute(0, 2, 1) # (N, 14, 64)
+            p_hats = model(X_tensor).squeeze().numpy()
+            # Ensure p_hats is 1D
+            if p_hats.ndim > 1:
+                p_hats = p_hats.flatten()
             
         # 5. Risk Map
         # Re-extract volatility from features_df aligned with timestamps
