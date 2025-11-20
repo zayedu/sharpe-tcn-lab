@@ -8,11 +8,11 @@ import os
 import sqlite3
 from datetime import datetime
 
-from data_loader import download_data
-from features import FeatureEngineer
-from model_tcn import TCN, train_model
-from riskmap import calculate_position_size, vectorized_risk_map
-from backtest import VectorizedBacktester
+from .data_loader import download_data
+from .features import FeatureEngineer
+from .model_tcn import TCN, train_model
+from .riskmap import calculate_position_size, vectorized_risk_map
+from .backtest import VectorizedBacktester
 
 app = FastAPI(title="Quant TCN Riskmap API")
 
