@@ -94,7 +94,8 @@ async def start_backtest(config: BacktestConfig):
         
         # 2. Features
         fe = FeatureEngineer()
-        X, y, timestamps = fe.create_dataset(df)
+        features_df, _ = fe.create_features(df)
+        X, y, returns, volatility, timestamps = fe.create_dataset(df)
         
         # Split Train/Test (Simple time split)
         train_size = int(len(X) * 0.7)
@@ -129,14 +130,8 @@ async def start_backtest(config: BacktestConfig):
             p_hats = model(X_tensor).numpy()
             
         # 5. Risk Map
-        # Need sigma_hats. We have 'volatility' feature in df.
-        # We need to align df with X.
-        # X starts at index window_size.
-        # timestamps corresponds to the time of prediction (t).
-        # We need volatility at t.
-        
-        # Re-extract volatility from df aligned with timestamps
-        aligned_vol = df.loc[timestamps, 'volatility'].values
+        # Re-extract volatility from features_df aligned with timestamps
+        aligned_vol = features_df.loc[timestamps, 'volatility'].values
         
         weights = vectorized_risk_map(
             p_hats, aligned_vol, config.target_sigma, config.w_min, config.w_max, config.tau
