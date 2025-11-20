@@ -36,7 +36,7 @@ def main():
     
     # 1. Data
     try:
-        df = download_data("SPY", "2005-01-01", "2024-01-01")
+        df = download_data("QQQ", "2005-01-01", "2024-01-01")
     except Exception as e:
         print(f"Failed to download data: {e}")
         return
