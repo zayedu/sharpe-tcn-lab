@@ -146,7 +146,6 @@ def main():
         torch.save({
             'model_state_dict': model.state_dict(),
             'year': year,
-            'val_sharpe': val_sharpe,
             'num_inputs': 14,
             'num_channels': [32, 32],
             'kernel_size': 3,
