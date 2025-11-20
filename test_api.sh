@@ -1,7 +1,10 @@
 #!/bin/bash
 
 # API Test Script for Sharpe TCN Lab
-# Make sure the API is running: uvicorn quant_tcn_riskmap.api:app --reload
+# 
+# IMPORTANT: Start the API first with:
+# cd /Users/zayedumer/Documents/Personal-Projects/riskmap
+# PYTHONPATH=. uvicorn quant_tcn_riskmap.api:app --reload
 
 BASE_URL="http://localhost:8000"
 
