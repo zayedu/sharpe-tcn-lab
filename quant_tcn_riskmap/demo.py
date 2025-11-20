@@ -139,6 +139,21 @@ def main():
         all_preds.append(signals)
         all_timestamps.append(ts_test)
         
+        # Save the trained model for this year
+        model_path = f"models/tcn_qqq_{year}.pt"
+        import os
+        os.makedirs("models", exist_ok=True)
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'year': year,
+            'val_sharpe': val_sharpe,
+            'num_inputs': 14,
+            'num_channels': [32, 32],
+            'kernel_size': 3,
+            'dropout': 0.2
+        }, model_path)
+        print(f"Saved model to {model_path}")
+        
     # Concatenate Results
     full_signals = np.concatenate(all_preds)
     full_timestamps = np.concatenate(all_timestamps)
@@ -167,6 +182,18 @@ def main():
     print(f"Total Return: {results['total_return']*100:.2f}%")
     print(f"Max Drawdown: {results['max_drawdown']*100:.2f}%")
     print(f"Avg Turnover: {results['avg_turnover']:.4f}")
+    
+    # Save the final model (most recent year) as default
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'ticker': 'QQQ',
+        'final_sharpe': results['sharpe_ratio'],
+        'num_inputs': 14,
+        'num_channels': [32, 32],
+        'kernel_size': 3,
+        'dropout': 0.2
+    }, "models/tcn_latest.pt")
+    print(f"\nSaved final model to models/tcn_latest.pt")
     
     if results['sharpe_ratio'] > 1.8:
         print("\nSUCCESS: Sharpe Ratio > 1.8")

@@ -16,6 +16,35 @@ from backtest import VectorizedBacktester
 
 app = FastAPI(title="Quant TCN Riskmap API")
 
+# Load pre-trained model on startup
+LOADED_MODEL = None
+MODEL_CONFIG = None
+
+def load_model(model_path: str = "models/tcn_latest.pt"):
+    """Load a pre-trained TCN model"""
+    global LOADED_MODEL, MODEL_CONFIG
+    try:
+        checkpoint = torch.load(model_path)
+        MODEL_CONFIG = {
+            'num_inputs': checkpoint['num_inputs'],
+            'num_channels': checkpoint['num_channels'],
+            'kernel_size': checkpoint['kernel_size'],
+            'dropout': checkpoint['dropout']
+        }
+        LOADED_MODEL = TCN(**MODEL_CONFIG)
+        LOADED_MODEL.load_state_dict(checkpoint['model_state_dict'])
+        LOADED_MODEL.eval()
+        print(f"Loaded model from {model_path}")
+        return True
+    except FileNotFoundError:
+        print(f"Model not found at {model_path}. Run demo.py first to train a model.")
+        return False
+
+@app.on_event("startup")
+async def startup_event():
+    """Load model when API starts"""
+    load_model()
+
 # Database setup
 DB_FILE = "runs.db"
 
@@ -50,13 +79,12 @@ class PredictRequest(BaseModel):
     current_sigma: float
 
 class PredictResponse(BaseModel):
-    p_hat: float
-    w: float
-
-# Global model (lazy loading or trained on startup)
-# For this demo, we'll train a model on the fly or load a saved one.
-# To keep it simple, we'll have a global variable that can be updated.
-global_model = None
+    probability: float
+    signal: float
+    volatility: float
+    weight: float
+    model_loaded: bool
+    timestamp: str
 
 @app.post("/runs")
 async def start_backtest(config: BacktestConfig):
@@ -166,29 +194,39 @@ async def get_run(run_id: int):
 
 @app.post("/predict")
 async def predict(request: PredictRequest):
-    # Mock model if not loaded
-    # In a real scenario, we'd load the trained model.
-    # For this demo, we'll instantiate a random model if none exists.
-    global global_model
-    if global_model is None:
-        global_model = TCN(num_inputs=12, num_channels=[16, 32, 64], kernel_size=3)
-        global_model.eval()
+    """
+    One-off prediction using pre-loaded model.
+    """
+    if LOADED_MODEL is None:
+        raise HTTPException(status_code=503, detail="No model loaded. Run demo.py first to train a model.")
         
     # Input shape: (Batch, Time, Features) -> (Batch, Features, Time)
-    # Request features: (64, 12) -> We need (1, 12, 64)
+    # Request features: (64, 14) -> We need (1, 14, 64)
     features = np.array(request.features)
-    if features.shape != (64, 12):
-        raise HTTPException(status_code=400, detail=f"Expected shape (64, 12), got {features.shape}")
+    if features.shape[1] != 14:
+        raise HTTPException(status_code=400, detail=f"Expected 14 features, got {features.shape[1]}")
         
     x_tensor = torch.from_numpy(features).float().unsqueeze(0).permute(0, 2, 1)
     
     with torch.no_grad():
-        p_hat = global_model(x_tensor).item()
+        prob = LOADED_MODEL(x_tensor).item()
+        # Convert probability to signal
+        signal = (prob - 0.5) * 2
         
-    # Risk Map (using default params or could be passed in request)
-    w = calculate_position_size(p_hat, request.current_sigma, 0.15, -1.0, 1.0, 0.1)
+    # Risk Map with volatility scaling
+    vol = request.current_sigma
+    vol_scale = min(0.15 / (vol + 1e-8), 4.0)
+    weight = signal * vol_scale
+    weight = max(min(weight, 1.5), -1.5)  # Clip
     
-    return PredictResponse(p_hat=p_hat, w=w)
+    return {
+        "probability": prob,
+        "signal": signal,
+        "volatility": vol,
+        "weight": weight,
+        "model_loaded": True,
+        "timestamp": datetime.now().isoformat()
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -56,3 +56,7 @@ Thumbs.db
 # Project specific
 test_linear.py
 *.webp
+
+# Models (too large for git)
+models/*.pt
+!models/.gitkeep
