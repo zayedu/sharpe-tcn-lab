@@ -104,17 +104,32 @@ async def start_backtest(config: BacktestConfig):
         
         # 3. Train Model (Quick training for demo)
         # Convert to tensors
+        ret_train = returns[:train_size]
+        ret_test = returns[train_size:]
+        vol_train = volatility[:train_size]
+        vol_test = volatility[train_size:]
+        
         train_loader = torch.utils.data.DataLoader(
-            torch.utils.data.TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(y_train).float()),
+            torch.utils.data.TensorDataset(
+                torch.from_numpy(X_train).float(), 
+                torch.from_numpy(y_train).float(),
+                torch.from_numpy(ret_train).float(),
+                torch.from_numpy(vol_train).float()
+            ),
             batch_size=32, shuffle=True
         )
         val_loader = torch.utils.data.DataLoader(
-            torch.utils.data.TensorDataset(torch.from_numpy(X_test).float(), torch.from_numpy(y_test).float()),
+            torch.utils.data.TensorDataset(
+                torch.from_numpy(X_test).float(), 
+                torch.from_numpy(y_test).float(),
+                torch.from_numpy(ret_test).float(),
+                torch.from_numpy(vol_test).float()
+            ),
             batch_size=32, shuffle=False
         )
         
-        model = TCN(num_inputs=12, num_channels=[16, 32, 64], kernel_size=3, dropout=0.2)
-        train_model(model, train_loader, val_loader, epochs=5) # Short epochs for API response speed
+        model = TCN(num_inputs=14, num_channels=[16, 32, 64], kernel_size=3, dropout=0.2)
+        train_model(model, train_loader, val_loader, epochs=5, alpha=0.5) # Short epochs for API response speed
         
         # 4. Inference on whole dataset (or just test set?)
         # Let's do whole dataset to see full curve, but strictly backtest on test set usually.
